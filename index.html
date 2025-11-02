@@ -1,0 +1,248 @@
+<!doctype html>
+
+<html lang="ar">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>لعبة جوال بسيطة</title>
+  <style>
+    :root{
+      --bg1:#0f172a;
+      --bg2:#0f8cff;
+      --accent:#7c3aed;
+      --soft:#60a5fa;
+      --card:#0b1220;
+      --glass: rgba(255,255,255,0.06);
+    }
+    html,body{height:100%;margin:0;font-family:system-ui,Arial;direction:rtl}
+    #game-wrap{display:flex;align-items:center;justify-content:center;height:100vh;background:linear-gradient(180deg,var(--bg1),#071020);}
+    canvas{border-radius:18px;box-shadow:0 10px 30px rgba(2,6,23,0.6);background:linear-gradient(180deg,var(--bg2),#0b3f80);}
+    .ui{
+      position:fixed;left:18px;top:18px;color:#fff;padding:8px 12px;background:var(--glass);backdrop-filter:blur(6px);border-radius:12px;font-size:14px
+    }
+    .bottom-ui{position:fixed;right:18px;bottom:18px;color:#fff;padding:8px 12px;background:var(--glass);border-radius:12px;font-size:14px}
+    button.small{background:linear-gradient(90deg,var(--accent),#4f46e5);border:none;padding:8px 10px;border-radius:10px;color:white;margin-left:6px}
+  </style>
+</head>
+<body>
+  <div id="game-wrap">
+    <canvas id="c"></canvas>
+  </div>
+  <div class="ui">النقاط: <span id="score">0</span></div>
+  <div class="bottom-ui">المس الشاشة للقفز <button class="small" id="restart">إعادة</button></div><script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+function resize(){
+  const DPR = window.devicePixelRatio || 1;
+  const maxWidth = Math.min(window.innerWidth - 36, 820);
+  const maxHeight = Math.min(window.innerHeight - 120, 1100);
+  canvas.style.width = maxWidth + 'px';
+  canvas.style.height = maxHeight + 'px';
+  canvas.width = Math.floor(maxWidth * DPR);
+  canvas.height = Math.floor(maxHeight * DPR);
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+const state = {
+  running: true,
+  score: 0,
+  speed: 2.6,
+  spawnTimer: 0,
+  spawnInterval: 1200,
+  lastTime: performance.now(),
+  particles: []
+};
+
+const player = {
+  x: 80,
+  y: 0,
+  w: 44,
+  h: 44,
+  vy: 0,
+  gravity: 0.9,
+  jumpPower: -14,
+  grounded: false,
+  color: '#fff'
+};
+
+let groundY = 0;
+const obstacles = [];
+
+// 🔊 تحميل الأصوات
+const jumpSound = new Audio('jump.mp3');
+const hitSound = new Audio('hit.mp3');
+
+function spawnParticles(x,y,n){
+  for(let i=0;i<n;i++){
+    state.particles.push({x,y,vy:-(Math.random()*3+1),vx:(Math.random()-0.5)*4,life:Math.random()*500+300,age:0,r:Math.random()*3+1});
+  }
+}
+
+function spawnObstacle(){
+  const h = 28 + Math.random()*60;
+  const w = 18 + Math.random()*36;
+  const y = groundY - h;
+  obstacles.push({x: canvas.width/(window.devicePixelRatio||1) + 40, y, w, h, passed:false});
+}
+
+function rectsOverlap(a,b){
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function reset(){
+  state.score = 0;
+  obstacles.length = 0;
+  state.spawnTimer = 0;
+  state.running = true;
+  player.y = 0;
+  player.vy = 0;
+  state.lastTime = performance.now();
+}
+document.getElementById('restart').addEventListener('click', ()=>{ reset(); });
+
+function jump(){
+  if(!state.running) return;
+  if(player.grounded || player.vy > -2){
+    player.vy = player.jumpPower;
+    player.grounded = false;
+    spawnParticles(player.x+player.w/2, player.y+player.h, 8);
+    jumpSound.currentTime = 0;
+    jumpSound.play();
+  }
+}
+canvas.addEventListener('touchstart', (e)=>{ e.preventDefault(); jump(); }, {passive:false});
+canvas.addEventListener('mousedown', ()=>{ jump(); });
+
+function update(t){
+  const dt = Math.min(40, t - state.lastTime);
+  state.lastTime = t;
+  groundY = (canvas.height / (window.devicePixelRatio||1)) - 60;
+  player.vy += player.gravity * (dt/16);
+  player.y += player.vy * (dt/16);
+  if(player.y + player.h >= groundY){
+    player.y = groundY - player.h;
+    player.vy = 0;
+    player.grounded = true;
+  } else {
+    player.grounded = false;
+  }
+
+  state.spawnTimer += dt;
+  if(state.spawnTimer > state.spawnInterval){
+    state.spawnTimer = 0;
+    spawnObstacle();
+    state.spawnInterval = Math.max(700, state.spawnInterval * 0.99);
+  }
+
+  for(let i=obstacles.length-1;i>=0;i--){
+    const obs = obstacles[i];
+    obs.x -= state.speed * (dt/16) * (1 + state.score/200);
+    if(!obs.passed && obs.x + obs.w < player.x){
+      obs.passed = true;
+      state.score += 1;
+      document.getElementById('score').textContent = state.score;
+      spawnParticles(obs.x + obs.w/2, obs.y, 10);
+    }
+    if(obs.x + obs.w < -50) obstacles.splice(i,1);
+  }
+
+  for(let i=state.particles.length-1;i>=0;i--){
+    const p = state.particles[i];
+    p.age += dt;
+    p.vy += 0.06 * (dt/16);
+    p.x += p.vx * (dt/16);
+    p.y += p.vy * (dt/16);
+    if(p.age > p.life) state.particles.splice(i,1);
+  }
+
+  for(const obs of obstacles){
+    if(rectsOverlap(player, obs)){
+      state.running = false;
+      spawnParticles(player.x+player.w/2, player.y+player.h/2, 28);
+      hitSound.currentTime = 0;
+      hitSound.play();
+      break;
+    }
+  }
+
+  draw();
+  if(state.running) requestAnimationFrame(update);
+  else showGameOver();
+}
+
+function draw(){
+  const W = canvas.width/(window.devicePixelRatio||1);
+  const H = canvas.height/(window.devicePixelRatio||1);
+  ctx.clearRect(0,0,W,H);
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#07102a');
+  g.addColorStop(1,'#032b55');
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,W,H);
+
+  groundY = H - 60;
+  const groundGrad = ctx.createLinearGradient(0,groundY,0,H);
+  groundGrad.addColorStop(0,'rgba(255,255,255,0.03)');
+  groundGrad.addColorStop(1,'rgba(0,0,0,0.25)');
+  ctx.fillStyle = groundGrad;
+  ctx.fillRect(0, groundY, W, H-groundY);
+
+  const pg = ctx.createLinearGradient(player.x, player.y, player.x, player.y+player.h);
+  pg.addColorStop(0,'#7c3aed');
+  pg.addColorStop(1,'#60a5fa');
+  ctx.fillStyle = pg;
+  roundRect(ctx, player.x, player.y, player.w, player.h, 8);
+  ctx.fill();
+
+  for(const obs of obstacles){
+    const og = ctx.createLinearGradient(obs.x, obs.y, obs.x+obs.w, obs.y+obs.h);
+    og.addColorStop(0,'#ff7a18');
+    og.addColorStop(1,'#ff3d6f');
+    ctx.fillStyle = og;
+    roundRect(ctx, obs.x, obs.y, obs.w, obs.h, 6);
+    ctx.fill();
+  }
+
+  for(const p of state.particles){
+    const lifeRatio = 1 - p.age / p.life;
+    ctx.globalAlpha = Math.max(0, lifeRatio);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r * lifeRatio, 0, Math.PI*2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function roundRect(ctx, x, y, w, h, r){
+  const radius = Math.min(r, w/2, h/2);
+  ctx.beginPath();
+  ctx.moveTo(x+radius, y);
+  ctx.arcTo(x+w, y, x+w, y+h, radius);
+  ctx.arcTo(x+w, y+h, x, y+h, radius);
+  ctx.arcTo(x, y+h, x, y, radius);
+  ctx.arcTo(x, y, x+w, y, radius);
+  ctx.closePath();
+}
+
+function showGameOver(){
+  const W = canvas.width/(window.devicePixelRatio||1);
+  const H = canvas.height/(window.devicePixelRatio||1);
+  ctx.save();
+  ctx.fillStyle = 'rgba(2,6,23,0.6)';
+  ctx.fillRect(0,0,W,H);
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center';
+  ctx.font = '28px system-ui, Arial';
+  ctx.fillText('انتهت اللعبة', W/2, H/2 - 12);
+  ctx.font = '18px system-ui, Arial';
+  ctx.fillText('نقاطك: ' + state.score, W/2, H/2 + 18);
+  ctx.restore();
+}
+
+requestAnimationFrame(update);
+</script></body>
+</html>
